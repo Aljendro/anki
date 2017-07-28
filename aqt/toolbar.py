@@ -4,7 +4,7 @@
 
 from aqt.qt import *
 
-class Toolbar(object):
+class Toolbar:
 
     def __init__(self, mw, web):
         self.mw = mw
@@ -17,6 +17,7 @@ class Toolbar(object):
             "stats": self._statsLinkHandler,
             "sync": self._syncLinkHandler,
         }
+        self.web.setFixedHeight(30)
 
     def onLoaded(self):
         self.web.evalWithCallback("$(document.body).height()", self.onHeight)
@@ -28,29 +29,18 @@ class Toolbar(object):
     def draw(self):
         self.web.onBridgeCmd = self._linkHandler
         self.web.onLoadFinished = self.onLoaded
-        self.web.stdHtml(self._body % (
-            # may want a context menu here in the future
-            '&nbsp;'*20,
-            self._centerLinks(),
-            self._rightIcons()),
-                         self._css)
+        self.web.stdHtml(self._body % self._centerLinks(), self._css)
 
     # Available links
     ######################################################################
-
-    def _rightIconsList(self):
-        return [
-            ["stats", "qrc:/icons/view-statistics.png",
-             _("Show statistics. Shortcut key: %s") % "Shift+S"],
-            ["sync", "qrc:/icons/view-refresh.png",
-             _("Synchronize with AnkiWeb. Shortcut key: %s") % "Y"],
-        ]
 
     def _centerLinks(self):
         links = [
             ["decks", _("Decks"), _("Shortcut key: %s") % "D"],
             ["add", _("Add"), _("Shortcut key: %s") % "A"],
             ["browse", _("Browse"), _("Shortcut key: %s") % "B"],
+            ["stats", _("Stats"), _("Shortcut key: %s") % "Shift+S"],
+            ["sync", _("Sync"), _("Shortcut key: %s") % "Y"],
         ]
         return self._linkHTML(links)
 
@@ -61,14 +51,6 @@ class Toolbar(object):
             <a class=hitem title="%s" href=# onclick="pycmd('%s')">%s</a>''' % (
                 title, ln, name)
             buf += "&nbsp;"*3
-        return buf
-
-    def _rightIcons(self):
-        buf = ""
-        for ln, icon, title in self._rightIconsList():
-            buf += '''
-            <a class=hitem title="%s" href=# onclick='pycmd("%s")'><img width="16px" height="16px" src="%s"></a>''' % (
-                title, ln, icon)
         return buf
 
     # Link handling
@@ -109,9 +91,7 @@ class Toolbar(object):
 <center id=outer>
 <table id=header width=100%%>
 <tr>
-<td width=16%% align=left>%s</td>
-<td align=center>%s</td>
-<td width=15%% valign=middle align=right>%s</td>
+<td class=tdcenter align=center>%s</td>
 </tr></table>
 </center>
 """
@@ -121,9 +101,10 @@ class Toolbar(object):
 padding:3px;
 font-weight: bold;
 border-bottom: 1px solid #aaa;
-background: -webkit-gradient(linear, left top, left bottom,
-  from(#ddd), to(#fff));
+background: %s;
 }
+
+.tdcenter { white-space: nowrap; }
 
 body {
 margin:0; padding:0;
@@ -148,8 +129,6 @@ class BottomBar(Toolbar):
 
     _css = Toolbar._css + """
 #header {
-background: -webkit-gradient(linear, left top, left bottom,
-from(#fff), to(#ddd));
 border-bottom: 0;
 border-top: 1px solid #aaa;
 margin-bottom: 6px;

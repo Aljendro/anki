@@ -5,7 +5,28 @@
 from aqt.qt import *
 from http import HTTPStatus
 import http.server
+import socketserver
 import errno
+
+# locate web folder in source/binary distribution
+def _getExportFolder():
+    # running from source?
+    srcFolder = os.path.join(os.path.dirname(__file__), "..")
+    webInSrcFolder = os.path.abspath(os.path.join(srcFolder, "web"))
+    if os.path.exists(webInSrcFolder):
+        return webInSrcFolder
+    elif isMac:
+        dir = os.path.dirname(os.path.abspath(__file__))
+        return os.path.abspath(dir + "/../../Resources/web")
+    else:
+      raise Exception("couldn't find web folder")
+
+_exportFolder = _getExportFolder()
+
+# webengine on windows sometimes opens a connection and fails to send a request,
+# which will hang the server if unthreaded
+class ThreadedHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
+    pass
 
 class MediaServer(QThread):
 
@@ -14,7 +35,7 @@ class MediaServer(QThread):
         self.server = None
         while not self.server:
             try:
-                self.server = http.server.HTTPServer(
+                self.server = ThreadedHTTPServer(
                         ("localhost", self.port), RequestHandler)
             except OSError as e:
                 if e.errno == errno.EADDRINUSE:
@@ -44,6 +65,7 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
 
     def send_head(self):
         path = self.translate_path(self.path)
+        path = self._redirectWebExports(path)
         if os.path.isdir(path):
             self.send_error(HTTPStatus.NOT_FOUND, "File not found")
             return None
@@ -59,6 +81,7 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
             fs = os.fstat(f.fileno())
             self.send_header("Content-Length", str(fs[6]))
             self.send_header("Last-Modified", self.date_time_string(fs.st_mtime))
+            self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             return f
         except:
@@ -72,3 +95,11 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                          (self.address_string(),
                           self.log_date_time_string(),
                           format%args))
+
+    # catch /_anki references and rewrite them to web export folder
+    def _redirectWebExports(self, path):
+        targetPath = os.path.join(os.getcwd(), "_anki")
+        if path.startswith(targetPath):
+            newPath = os.path.join(_exportFolder, path[len(targetPath)+1:])
+            return newPath
+        return path

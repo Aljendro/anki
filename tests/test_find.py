@@ -1,4 +1,5 @@
 # coding: utf-8
+from nose.tools import assert_raises
 
 from anki.find import Finder
 from tests.shared import getEmptyCol
@@ -24,14 +25,14 @@ def test_findCards():
     f = deck.newNote()
     f['Front'] = 'dog'
     f['Back'] = 'cat'
-    f.tags.append("monkey")
+    f.tags.append("monkey animal_1 * %")
     f1id = f.id
     deck.addNote(f)
     firstCardId = f.cards()[0].id
     f = deck.newNote()
     f['Front'] = 'goats are fun'
     f['Back'] = 'sheep'
-    f.tags.append("sheep goat horse")
+    f.tags.append("sheep goat horse animal11")
     deck.addNote(f)
     f2id = f.id
     f = deck.newNote()
@@ -51,6 +52,12 @@ def test_findCards():
     deck.addNote(f)
     latestCardIds = [c.id for c in f.cards()]
     # tag searches
+    assert len(deck.findCards("tag:*")) == 5
+    assert len(deck.findCards("tag:\\*")) == 1
+    assert len(deck.findCards("tag:%")) == 5
+    assert len(deck.findCards("tag:\\%")) == 1
+    assert len(deck.findCards("tag:animal_1")) == 2
+    assert len(deck.findCards("tag:animal\\_1")) == 1
     assert not deck.findCards("tag:donkey")
     assert len(deck.findCards("tag:sheep")) == 1
     assert len(deck.findCards("tag:sheep tag:goat")) == 1
@@ -93,7 +100,8 @@ def test_findCards():
     assert len(deck.findCards("nid:%d"%f.id)) == 2
     assert len(deck.findCards("nid:%d,%d" % (f1id, f2id))) == 2
     # templates
-    assert len(deck.findCards("card:foo")) == 0
+    with assert_raises(Exception):
+        deck.findCards("card:foo")
     assert len(deck.findCards("'card:card 1'")) == 4
     assert len(deck.findCards("card:reverse")) == 1
     assert len(deck.findCards("card:1")) == 4
@@ -128,7 +136,8 @@ def test_findCards():
     assert len(deck.findCards("-deck:foo")) == 5
     assert len(deck.findCards("deck:def*")) == 5
     assert len(deck.findCards("deck:*EFAULT")) == 5
-    assert len(deck.findCards("deck:*cefault")) == 0
+    with assert_raises(Exception):
+        deck.findCards("deck:*cefault")
     # full search
     f = deck.newNote()
     f['Front'] = 'hello<b>world</b>'
@@ -144,7 +153,8 @@ def test_findCards():
     #assert len(deck.findCards("helloworld", full=True)) == 2
     #assert len(deck.findCards("back:helloworld", full=True)) == 2
     # searching for an invalid special tag should not error
-    assert len(deck.findCards("is:invalid")) == 0
+    with assert_raises(Exception):
+        len(deck.findCards("is:invalid"))
     # should be able to limit to parent deck, no children
     id = deck.db.scalar("select id from cards limit 1")
     deck.db.execute("update cards set did = ? where id = ?",

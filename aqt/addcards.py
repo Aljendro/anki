@@ -9,7 +9,7 @@ from aqt.utils import saveGeom, restoreGeom, showWarning, askUser, shortcut, \
     tooltip, openHelp, addCloseShortcut, downArrow
 from anki.sound import clearAudioQueue
 from anki.hooks import addHook, remHook, runHook
-from anki.utils import stripHTMLMedia, isMac
+from anki.utils import stripHTMLMedia, htmlToTextLine, isMac
 import aqt.editor, aqt.modelchooser, aqt.deckchooser
 
 class AddCards(QDialog):
@@ -106,6 +106,7 @@ class AddCards(QDialog):
                         note.fields[n] = oldNote.fields[n]
                     except IndexError:
                         pass
+            self.removeTempNote(oldNote)
         self.editor.currentField = 0
         self.editor.setNote(note, focus=True)
 
@@ -135,16 +136,23 @@ class AddCards(QDialog):
         self.mw.col._remNotes([note.id])
 
     def addHistory(self, note):
-        txt = stripHTMLMedia(",".join(note.fields))[:30]
-        self.history.insert(0, (note.id, txt))
+        self.history.insert(0, note.id)
         self.history = self.history[:15]
         self.historyButton.setEnabled(True)
 
     def onHistory(self):
         m = QMenu(self)
-        for nid, txt in self.history:
-            a = m.addAction(_("Edit %s") % txt)
-            a.triggered.connect(lambda b, nid=nid: self.editHistory(nid))
+        for nid in self.history:
+            if self.mw.col.findNotes("nid:%s" % nid):
+                fields = self.mw.col.getNote(nid).fields
+                txt = htmlToTextLine(", ".join(fields))
+                if len(txt) > 30:
+                    txt = txt[:30] + "..."
+                a = m.addAction(_("Edit \"%s\"") % txt)
+                a.triggered.connect(lambda b, nid=nid: self.editHistory(nid))
+            else:
+                a = m.addAction(_("(Note deleted)"))
+                a.setEnabled(False)
         runHook("AddCards.onHistory", self, m)
         m.exec_(self.historyButton.mapToGlobal(QPoint(0,0)))
 

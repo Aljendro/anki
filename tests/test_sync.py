@@ -5,6 +5,7 @@ import nose, os, shutil, time
 from anki import Collection as aopen, Collection
 from anki.utils import intTime
 from anki.sync import Syncer, LocalServer
+from anki.consts import STARTING_FACTOR
 from tests.shared import getEmptyCol, getEmptyDeckWith
 
 # Local tests
@@ -166,15 +167,17 @@ def test_cards():
 @nose.with_setup(setup_modified)
 def test_tags():
     test_sync()
-    assert deck1.tags.all() == deck2.tags.all()
+    def sortedTags(deck):
+        return sorted(deck.tags.all())
+    assert sortedTags(deck1) == sortedTags(deck2)
     deck1.tags.register(["abc"])
     deck2.tags.register(["xyz"])
-    assert deck1.tags.all() != deck2.tags.all()
+    assert sortedTags(deck1) != sortedTags(deck2)
     deck1.save()
     time.sleep(0.1)
     deck2.save()
     assert client.sync() == "success"
-    assert deck1.tags.all() == deck2.tags.all()
+    assert sortedTags(deck1) == sortedTags(deck2)
 
 @nose.with_setup(setup_modified)
 def test_decks():
@@ -189,7 +192,7 @@ def test_decks():
     time.sleep(0.1)
     deck2.save()
     assert client.sync() == "success"
-    assert deck1.tags.all() == deck2.tags.all()
+    assert sorted(deck1.tags.all()) == sorted(deck2.tags.all())
     assert len(deck1.decks.all()) == len(deck2.decks.all())
     assert len(deck1.decks.all()) == 3
     assert deck1.decks.confForDid(1)['maxTaken'] == 60
@@ -341,7 +344,7 @@ def test_filtered_delete():
     card = note.cards()[0]
     card.type = 2
     card.ivl = 10
-    card.factor = 2500
+    card.factor = STARTING_FACTOR
     card.due = deck1.sched.today
     card.flush()
     # put cards into a filtered deck

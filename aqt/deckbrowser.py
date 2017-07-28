@@ -6,13 +6,12 @@ from aqt.qt import *
 from aqt.utils import askUser, getOnlyText, openLink, showWarning, shortcut, \
     openHelp, downArrow
 from anki.utils import isMac, ids2str, fmtTimeSpan
-import anki.js
 from anki.errors import DeckRenameError
 import aqt
 from anki.sound import clearAudioQueue
 from anki.hooks import runHook
 
-class DeckBrowser(object):
+class DeckBrowser:
 
     def __init__(self, mw):
         self.mw = mw
@@ -24,7 +23,6 @@ class DeckBrowser(object):
         clearAudioQueue()
         self.web.resetHandlers()
         self.web.onBridgeCmd = self._linkHandler
-        self.mw.keyHandler = self._keyHandler
         self._renderPage()
 
     def refresh(self):
@@ -62,10 +60,6 @@ class DeckBrowser(object):
         elif cmd == "collapse":
             self._collapse(arg)
         return False
-
-    def _keyHandler(self, evt):
-        # currently does nothing
-        key = str(evt.text())
 
     def _selDeck(self, did):
         self.mw.col.decks.select(did)
@@ -146,7 +140,7 @@ body { margin: 1em; -webkit-user-select: none; }
         stats = self._renderStats()
         self.web.stdHtml(self._body%dict(
             tree=tree, stats=stats, countwarn=self._countWarn()), css=css,
-                         js=anki.js.jquery+anki.js.ui)
+                         js=["jquery.js", "jquery-ui.js"])
         self.web.key = "deckBrowser"
         self._drawButtons()
 
@@ -173,11 +167,11 @@ where id > ?""", (self.mw.col.sched.dayCutoff-86400)*1000)
             return ""
         return "<br><div style='width:50%;border: 1px solid #000;padding:5px;'>"+(
             _("You have a lot of decks. Please see %(a)s. %(b)s") % dict(
-                a=("<a href=# onclick='pycmd('lots')>%s</a>" % _(
+                a=("<a href=# onclick=\"pycmd('lots')\">%s</a>" % _(
                     "this page")),
                 b=("<br><small><a href=# onclick='pycmd(\"hidelots\")'>("
                    "%s)</a></small>" % (_("hide"))+
-                    "</div")))
+                    "</div>")))
 
     def _renderDeckTree(self, nodes, depth=0):
         if not nodes:
@@ -338,14 +332,15 @@ where id > ?""", (self.mw.col.sched.dayCutoff-86400)*1000)
     # Top buttons
     ######################################################################
 
-    def _drawButtons(self):
-        links = [
+    drawLinks = [
             ["", "shared", _("Get Shared")],
             ["", "create", _("Create Deck")],
-            ["Ctrl+I", "import", _("Import File")],
-        ]
+            ["Ctrl+I", "import", _("Import File")],  # Ctrl+I works from menu
+    ]
+
+    def _drawButtons(self):
         buf = ""
-        for b in links:
+        for b in self.drawLinks:
             if b[0]:
                 b[0] = _("Shortcut key: %s") % shortcut(b[0])
             buf += """

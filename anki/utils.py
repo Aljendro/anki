@@ -125,11 +125,11 @@ def fmtFloat(float_value, point=1):
 
 # HTML
 ##############################################################################
-reStyle = re.compile("(?s)<style.*?>.*?</style>")
-reScript = re.compile("(?s)<script.*?>.*?</script>")
+reStyle = re.compile("(?si)<style.*?>.*?</style>")
+reScript = re.compile("(?si)<script.*?>.*?</script>")
 reTag = re.compile("<.*?>")
 reEnts = re.compile("&#?\w+;")
-reMedia = re.compile("<img[^>]+src=[\"']?([^\"'>]+)[\"']?[^>]*>")
+reMedia = re.compile("(?i)<img[^>]+src=[\"']?([^\"'>]+)[\"']?[^>]*>")
 
 def stripHTML(s):
     s = reStyle.sub("", s)
@@ -151,6 +151,17 @@ def minimizeHTML(s):
                s)
     s = re.sub('<span style="text-decoration: underline;">(.*?)</span>',
                '<u>\\1</u>', s)
+    return s
+
+def htmlToTextLine(s):
+    s = s.replace("<br>", " ")
+    s = s.replace("<br />", " ")
+    s = s.replace("<div>", " ")
+    s = s.replace("\n", " ")
+    s = re.sub("\[sound:[^]]+\]", "", s)
+    s = re.sub("\[\[type:[^]]+\]\]", "", s)
+    s = stripHTMLMedia(s)
+    s = s.strip()
     return s
 
 def entsToTxt(html):
@@ -330,6 +341,7 @@ def call(argv, wait=True, **kwargs):
 
 isMac = sys.platform.startswith("darwin")
 isWin = sys.platform.startswith("win32")
+isLin = not isMac and not isWin
 
 invalidFilenameChars = ":*?\"<>|"
 
@@ -369,7 +381,7 @@ def platDesc():
 # Debugging
 ##############################################################################
 
-class TimedLog(object):
+class TimedLog:
     def __init__(self):
         self._last = time.time()
     def log(self, s):

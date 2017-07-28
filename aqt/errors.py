@@ -8,11 +8,12 @@ from anki.lang import _
 from aqt.qt import *
 from aqt.utils import showText, showWarning
 
-def excepthook(etype,val,tb):
-    sys.stderr.write("Caught exception:\n%s%s\n" % (
-        ''.join(traceback.format_tb(tb)),
-        '{0}: {1}'.format(etype, val)))
-sys.excepthook = excepthook
+if not os.environ.get("DEBUG"):
+    def excepthook(etype,val,tb):
+        sys.stderr.write("Caught exception:\n%s%s\n" % (
+            ''.join(traceback.format_tb(tb)),
+            '{0}: {1}'.format(etype, val)))
+    sys.excepthook = excepthook
 
 class ErrorHandler(QObject):
     "Catch stderr and write into buffer."
@@ -26,7 +27,12 @@ class ErrorHandler(QObject):
         self.timer = None
         self.errorTimer.connect(self._setTimer)
         self.pool = ""
+        self._oldstderr = sys.stderr
         sys.stderr = self
+
+    def unload(self):
+        sys.stderr = self._oldstderr
+        sys.excepthook = None
 
     def write(self, data):
         # dump to stdout
@@ -61,6 +67,8 @@ Anki manual for more information.""")
         self.mw.progress.clear()
         if "abortSchemaMod" in error:
             return
+        if "10013" in error:
+            return showWarning(_("Your firewall or antivirus program is preventing Anki from creating a connection to itself. Please add an exception for Anki."))
         if "Pyaudio not" in error:
             return showWarning(_("Please install PyAudio"))
         if "install mplayer" in error:
@@ -97,8 +105,14 @@ or your deck may have a problem.
 <p>If that doesn't fix the problem, please copy the following<br>
 into a bug report:""")
         pluginText = _("""\
-An error occurred in an add-on.<br>
-Please post on the add-on forum:<br>%s<br>""")
+An error occurred in an add-on.<br><br>
+Please start Anki while holding down the shift key, and see if<br>
+the error goes away.<br><br>
+If the error goes away, please report the issue on the add-on<br>
+forum: %s
+<br><br>If the error occurs even with add-ons disabled, please<br>
+report the issue on our support site.
+""")
         pluginText %= "https://anki.tenderapp.com/discussions/add-ons"
         if "addon" in error:
             txt = pluginText

@@ -7,6 +7,8 @@ import signal
 import zipfile
 import gc
 import time
+import faulthandler
+from threading import Thread
 
 from send2trash import send2trash
 from aqt.qt import *
@@ -23,7 +25,7 @@ from aqt.utils import saveGeom, restoreGeom, showInfo, showWarning, \
     restoreState, getOnlyText, askUser, applyStyles, showText, tooltip, \
     openHelp, openLink, checkInvalidFilename
 import anki.db
-
+import sip
 
 class AnkiQt(QMainWindow):
     def __init__(self, app, profileManager, args):
@@ -31,9 +33,6 @@ class AnkiQt(QMainWindow):
         self.state = "startup"
         aqt.mw = self
         self.app = app
-        if isWin:
-            self._xpstyle = QStyleFactory.create("WindowsXP")
-            self.app.setStyle(self._xpstyle)
         self.pm = profileManager
         # running 2.0 for the first time?
         if self.pm.meta['firstRun']:
@@ -42,11 +41,7 @@ class AnkiQt(QMainWindow):
             self.pm.meta['firstRun'] = False
             self.pm.save()
         # init rest of app
-        if qtmajor == 4 and qtminor < 8:
-            # can't get modifiers immediately on qt4.7, so no safe mode there
-            self.safeMode = False
-        else:
-            self.safeMode = self.app.queryKeyboardModifiers() & Qt.ShiftModifier
+        self.safeMode = self.app.queryKeyboardModifiers() & Qt.ShiftModifier
         try:
             self.setupUI()
             self.setupAddons()
@@ -66,9 +61,12 @@ class AnkiQt(QMainWindow):
 
     def setupUI(self):
         self.col = None
+        self.setupCrashLog()
+        self.disableGC()
         self.setupAppMsg()
         self.setupKeys()
         self.setupThreads()
+        self.setupMediaServer()
         self.setupMainWindow()
         self.setupSystemSpecific()
         self.setupStyle()
@@ -80,7 +78,6 @@ class AnkiQt(QMainWindow):
         self.setupHooks()
         self.setupRefreshTimer()
         self.updateTitleBar()
-        self.setupMediaServer()
         # screens
         self.setupDeckBrowser()
         self.setupOverview()
@@ -156,8 +153,8 @@ class AnkiQt(QMainWindow):
         if not self.openProfile():
             showWarning(_("Invalid password."))
             return
-        self.profileDiag.close()
         self.loadProfile()
+        self.profileDiag.close()
         return True
 
     def profileNameOk(self, str):
@@ -210,8 +207,6 @@ Are you sure?""")):
         if self.pm.profile['mainWindowState']:
             restoreGeom(self, "mainWindow")
             restoreState(self, "mainWindow")
-        else:
-            self.resize(500, 400)
         # toolbar needs to be retranslated
         self.toolbar.draw()
         # titlebar
@@ -254,6 +249,8 @@ To import into a password protected profile, please open the profile before atte
         self.hide()
         if browser:
             self.showProfileManager()
+        else:
+            self.errorHandler.unload()
 
     # Collection load/unload
     ##########################################################################
@@ -322,12 +319,23 @@ the manual for information on how to restore from an automatic backup."))
     # Backup and auto-optimize
     ##########################################################################
 
+    class BackupThread(Thread):
+        def __init__(self, path, data):
+            Thread.__init__(self)
+            self.path = path
+            self.data = data
+            # create the file in calling thread to ensure the same
+            # file is not created twice
+            open(self.path, "wb").close()
+
+        def run(self):
+            z = zipfile.ZipFile(self.path, "w", zipfile.ZIP_DEFLATED)
+            z.writestr("collection.anki2", self.data)
+            z.writestr("media", "{}")
+            z.close()
+
     def backup(self):
         nbacks = self.pm.profile['numBackups']
-        if self.pm.profile.get('compressBackups', True):
-            zipStorage = zipfile.ZIP_DEFLATED
-        else:
-            zipStorage = zipfile.ZIP_STORED
         if not nbacks or os.getenv("ANKIDEV", 0):
             return
         dir = self.pm.backupFolder()
@@ -348,10 +356,9 @@ the manual for information on how to restore from an automatic backup."))
             n = backups[-1][0] + 1
         # do backup
         newpath = os.path.join(dir, "backup-%d.apkg" % n)
-        z = zipfile.ZipFile(newpath, "w", zipStorage)
-        z.write(path, "collection.anki2")
-        z.writestr("media", "{}")
-        z.close()
+        data = open(path, "rb").read()
+        b = self.BackupThread(newpath, data)
+        b.start()
         # remove if over
         if len(backups) + 1 > nbacks:
             delete = len(backups) + 1 - nbacks
@@ -373,14 +380,17 @@ the manual for information on how to restore from an automatic backup."))
     ##########################################################################
 
     def moveToState(self, state, *args):
-        #print "-> move from", self.state, "to", state
+        #print("-> move from", self.state, "to", state)
         oldState = self.state or "dummy"
         cleanup = getattr(self, "_"+oldState+"Cleanup", None)
         if cleanup:
             cleanup(state)
+        self.clearStateShortcuts()
         self.state = state
         runHook('beforeStateChange', state, oldState, *args)
         getattr(self, "_"+state+"State")(oldState, *args)
+        if state != "resetRequired":
+            self.bottomWeb.show()
         runHook('afterStateChange', state, oldState, *args)
 
     def _deckBrowserState(self, oldState):
@@ -477,7 +487,6 @@ the manual for information on how to restore from an automatic backup."))
 
     sharedCSS = """
 body {
-background: #f3f3f3;
 margin: 2em;
 }
 h1 { margin-bottom: 0.2em; }
@@ -502,7 +511,7 @@ title="%s" %s>%s</button>''' % (
         self.form = aqt.forms.main.Ui_MainWindow()
         self.form.setupUi(self)
         # toolbar
-        tweb = aqt.webview.AnkiWebView()
+        tweb = self.toolbarWeb = aqt.webview.AnkiWebView()
         tweb.title = "top toolbar"
         tweb.setFocusPolicy(Qt.WheelFocus)
         self.toolbar = aqt.toolbar.Toolbar(self, tweb)
@@ -609,37 +618,39 @@ title="%s" %s>%s</button>''' % (
     ##########################################################################
 
     def setupKeys(self):
-        self.keyHandler = None
-        # debug shortcut
-        self.debugShortcut = QShortcut(QKeySequence("Ctrl+:"), self)
-        self.debugShortcut.activated.connect(self.onDebug)
+        globalShortcuts = [
+            ("Ctrl+Shift+;", self.onDebug),
+            ("d", lambda: self.moveToState("deckBrowser")),
+            ("s", self.onStudyKey),
+            ("a", self.onAddCard),
+            ("b", self.onBrowse),
+            ("Shift+s", self.onStats),
+            ("y", self.onSync)
+        ]
+        self.applyShortcuts(globalShortcuts)
 
-    def keyPressEvent(self, evt):
-        # do we have a delegate?
-        if self.keyHandler:
-            # did it eat the key?
-            if self.keyHandler(evt):
-                return
-        # run standard handler
-        QMainWindow.keyPressEvent(self, evt)
-        # check global keys
-        key = str(evt.text())
-        if key == "d":
-            self.moveToState("deckBrowser")
-        elif key == "s":
-            if self.state == "overview":
-                self.col.startTimebox()
-                self.moveToState("review")
-            else:
-                self.moveToState("overview")
-        elif key == "a":
-            self.onAddCard()
-        elif key == "b":
-            self.onBrowse()
-        elif key == "S":
-            self.onStats()
-        elif key == "y":
-            self.onSync()
+        self.stateShortcuts = []
+
+    def applyShortcuts(self, shortcuts):
+        qshortcuts = []
+        for key, fn in shortcuts:
+            qshortcuts.append(QShortcut(QKeySequence(key), self, activated=fn))
+        return qshortcuts
+
+    def setStateShortcuts(self, shortcuts):
+        self.stateShortcuts = self.applyShortcuts(shortcuts)
+
+    def clearStateShortcuts(self):
+        for qs in self.stateShortcuts:
+            sip.delete(qs)
+        self.stateShortcuts = []
+
+    def onStudyKey(self):
+        if self.state == "overview":
+            self.col.startTimebox()
+            self.moveToState("review")
+        else:
+            self.moveToState("overview")
 
     # App exit
     ##########################################################################
@@ -654,7 +665,6 @@ title="%s" %s>%s</button>''' % (
         aw = self.app.activeWindow()
         if not aw or aw == self or force:
             self.unloadProfile(browser=False)
-            self.app.closeAllWindows()
         else:
             aw.close()
 
@@ -663,6 +673,8 @@ title="%s" %s>%s</button>''' % (
 
     def onUndo(self):
         n = self.col.undoName()
+        if not n:
+            return
         cid = self.col.undo()
         if cid and self.state == "review":
             card = self.col.getCard(cid)
@@ -688,8 +700,10 @@ title="%s" %s>%s</button>''' % (
         self.maybeEnableUndo()
 
     def autosave(self):
-        self.col.autosave()
+        saved = self.col.autosave()
         self.maybeEnableUndo()
+        if saved:
+            self.doGC()
 
     # Other menu operations
     ##########################################################################
@@ -721,7 +735,7 @@ title="%s" %s>%s</button>''' % (
         deck = self._selectedDeck()
         if not deck:
             return
-        aqt.stats.DeckStats(self)
+        aqt.dialogs.open("DeckStats", self)
 
     def onPrefs(self):
         import aqt.preferences
@@ -732,8 +746,7 @@ title="%s" %s>%s</button>''' % (
         aqt.models.Models(self, self, fromMain=True)
 
     def onAbout(self):
-        import aqt.about
-        aqt.about.show(self)
+        aqt.dialogs.open("About", self)
 
     def onDonate(self):
         openLink(aqt.appDonate)
@@ -876,15 +889,15 @@ and if the problem comes up again, please ask on the support site."""))
     def onRemNotes(self, col, nids):
         path = os.path.join(self.pm.profileFolder(), "deleted.txt")
         existed = os.path.exists(path)
-        with open(path, "a") as f:
+        with open(path, "ab") as f:
             if not existed:
-                f.write("nid\tmid\tfields\n")
+                f.write(b"nid\tmid\tfields\n")
             for id, mid, flds in col.db.execute(
                     "select id, mid, flds from notes where id in %s" %
                 ids2str(nids)):
                 fields = splitFields(flds)
-                f.write(("\t".join([str(id), str(mid)] + fields)))
-                f.write("\n")
+                f.write(("\t".join([str(id), str(mid)] + fields)).encode("utf8"))
+                f.write(b"\n")
 
     # Schema modifications
     ##########################################################################
@@ -1019,7 +1032,7 @@ will be lost. Continue?"""))
 
     def _captureOutput(self, on):
         mw = self
-        class Stream(object):
+        class Stream:
             def write(self, data):
                 mw._output += data
         if on:
@@ -1143,22 +1156,30 @@ Please ensure a profile is open and Anki is not busy, then try again."""),
 
     # GC
     ##########################################################################
-    # run the garbage collector after object is deleted so we don't leave
-    # expensive web engine processes lying around
+    # ensure gc runs in main thread
 
     def setupDialogGC(self, obj):
         obj.finished.connect(lambda o=obj: self.gcWindow(obj))
 
     def gcWindow(self, obj):
         obj.deleteLater()
-        t = QTimer(self)
-        t.timeout.connect(self._onCollect)
-        t.setSingleShot(True)
-        # will run next time queue is idle
-        t.start(0)
+        self.progress.timer(1000, self.doGC, False)
 
-    def _onCollect(self):
+    def disableGC(self):
         gc.collect()
+        gc.disable()
+
+    def doGC(self):
+        assert not self.progress.inDB
+        gc.collect()
+
+    # Crash log
+    ##########################################################################
+
+    def setupCrashLog(self):
+        p = os.path.join(self.pm.base, "crash.log")
+        self._crashLog = open(p, "ab", 0)
+        faulthandler.enable(self._crashLog)
 
     # Media server
     ##########################################################################

@@ -111,7 +111,11 @@ a tab, comma, and so on. If Anki is detecting the character incorrectly,
 you can enter it here. Use \\t to represent tab."""),
                 self, help="importing") or "\t"
         str = str.replace("\\t", "\t")
-        str = str.encode("ascii")
+        if len(str) > 1:
+            showWarning(_(
+                "Multi-character separators are not supported. "
+                "Please enter one character only."))
+            return
         self.hideMapping()
         def updateDelim():
             self.importer.delimiter = str
@@ -140,7 +144,7 @@ you can enter it here. Use \\t to represent tab."""),
             d = repr(d)
         txt = _("Fields separated by: %s") % d
         self.frm.autoDetect.setText(txt)
-        
+
     def accept(self):
         self.importer.mapping = self.mapping
         if not self.importer.mappingOk():
@@ -225,7 +229,7 @@ you can enter it here. Use \\t to represent tab."""),
             self.grid.addWidget(QLabel(text), num, 1)
             button = QPushButton(_("Change"))
             self.grid.addWidget(button, num, 2)
-            button.clicked.connect(lambda s=self,n=num: s.changeMappingNum(n))
+            button.clicked.connect(lambda _, s=self,n=num: s.changeMappingNum(n))
 
     def changeMappingNum(self, n):
         f = ChangeMap(self.mw, self.importer.model, self.mapping[n]).getField()

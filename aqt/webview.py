@@ -7,7 +7,6 @@ from anki.hooks import runHook
 from aqt.qt import *
 from aqt.utils import openLink
 from anki.utils import isMac, isWin
-import anki.js
 
 # Page for debug messages
 ##########################################################################
@@ -18,6 +17,7 @@ class AnkiWebPage(QWebEnginePage):
         QWebEnginePage.__init__(self)
         self._onBridgeCmd = onBridgeCmd
         self._setupBridge()
+        self.setBackgroundColor(Qt.transparent)
 
     def _setupBridge(self):
         class Bridge(QObject):
@@ -55,6 +55,8 @@ class AnkiWebPage(QWebEnginePage):
              dict(a=line, b=msg+"\n")))
 
     def acceptNavigationRequest(self, url, navType, isMainFrame):
+        if not isMainFrame:
+            return True
         # load all other links in browser
         openLink(url)
         return False
@@ -67,46 +69,51 @@ class AnkiWebPage(QWebEnginePage):
 
 class AnkiWebView(QWebEngineView):
 
-    def __init__(self, canFocus=True):
-        QWebEngineView.__init__(self)
+    def __init__(self, parent=None):
+        QWebEngineView.__init__(self, parent=parent)
         self.title = "default"
         self._page = AnkiWebPage(self._onBridgeCmd)
 
         self._loadFinishedCB = None
         self.setPage(self._page)
+
+        self._page.profile().setHttpCacheType(QWebEngineProfile.NoCache)
         self.resetHandlers()
         self.allowDrops = False
-        self.setCanFocus(canFocus)
-        self.installEventFilter(self)
+        QShortcut(QKeySequence("Esc"), self,
+                  context=Qt.WidgetWithChildrenShortcut, activated=self.onEsc)
+        if isMac:
+            for key, fn in [
+                (QKeySequence.Copy, self.onCopy),
+                (QKeySequence.Paste, self.onPaste),
+                (QKeySequence.Cut, self.onCut),
+                (QKeySequence.SelectAll, self.onSelectAll),
+            ]:
+                QShortcut(key, self,
+                          context=Qt.WidgetWithChildrenShortcut,
+                          activated=fn)
+
+        self.focusProxy().installEventFilter(self)
 
     def eventFilter(self, obj, evt):
-        if not isinstance(evt, QKeyEvent) or obj != self:
-            return False
-        if evt.matches(QKeySequence.Copy) and isMac:
-            self.onCopy()
-            return True
-        if evt.matches(QKeySequence.Cut) and isMac:
-            self.onCut()
-            return True
-        if evt.matches(QKeySequence.Paste) and isMac:
-            self.onPaste()
-            return True
-        if evt.matches(QKeySequence.SelectAll):
-            self.triggerPageAction(QWebEnginePage.SelectAll)
-            return False
-        if evt.key() == Qt.Key_Escape:
-            # cheap hack to work around webengine swallowing escape key that
-            # usually closes dialogs
-            w = self.parent()
-            while w:
-                if isinstance(w, QDialog) or isinstance(w, QMainWindow):
-                    from aqt import mw
-                    if w != mw:
-                        w.close()
-                    break
-                w = w.parent()
+        # disable pinch to zoom gesture
+        if isinstance(evt, QNativeGestureEvent):
             return True
         return False
+
+    def onEsc(self):
+        w = self.parent()
+        while w:
+            if isinstance(w, QDialog) or isinstance(w, QMainWindow):
+                from aqt import mw
+                # esc in a child window closes the window
+                if w != mw:
+                    w.close()
+                else:
+                    # in the main window, removes focus from type in area
+                    self.parent().setFocus()
+                break
+            w = w.parent()
 
     def onCopy(self):
         self.triggerPageAction(QWebEnginePage.Copy)
@@ -117,12 +124,13 @@ class AnkiWebView(QWebEngineView):
     def onPaste(self):
         self.triggerPageAction(QWebEnginePage.Paste)
 
+    def onSelectAll(self):
+        self.triggerPageAction(QWebEnginePage.SelectAll)
+
     def contextMenuEvent(self, evt):
-        if not self._canFocus:
-            return
         m = QMenu(self)
         a = m.addAction(_("Copy"))
-        a.triggered.connect(lambda: self.triggerPageAction(QWebEnginePage.Copy))
+        a.triggered.connect(self.onCopy)
         runHook("AnkiWebView.contextMenuEvent", self, m)
         m.popup(QCursor.pos())
 
@@ -142,31 +150,48 @@ class AnkiWebView(QWebEngineView):
         dpi = screen.logicalDpiX()
         return max(1, dpi / 96.0)
 
-    def stdHtml(self, body, css="", bodyClass="", js=None, head=""):
+    def stdHtml(self, body, css="", bodyClass="", js=["jquery.js"], head=""):
         if isWin:
             buttonspec = "button { font-size: 12px; font-family:'Segoe UI'; }"
             fontspec = 'font-size:12px;font-family:"Segoe UI";'
         elif isMac:
-            family=".AppleSystemUIFont"
-            fontspec = 'font-size:16px;font-family:"%s";'% \
+            family="Helvetica"
+            fontspec = 'font-size:15px;font-family:"%s";'% \
                        family
             buttonspec = """
-button { font-size: 14px; -webkit-appearance: none; background: #fff; border: 1px solid #ccc;
-border-radius:5px;}"""
+button { font-size: 13px; -webkit-appearance: none; background: #fff; border: 1px solid #ccc;
+border-radius:5px; font-family: Helvetica }"""
         else:
             buttonspec = ""
             family = self.font().family()
             fontspec = 'font-size:14px;font-family:%s;'%\
                 family
+        jstxt = "\n".join(self.bundledScript(fname) for fname in js)
 
-        self.setHtml("""
+        html="""
 <!doctype html>
 <html><head><title>%s</title><style>
 body { zoom: %f; %s }
 %s
 %s</style>
-<script>
 %s
+<script>
+// prevent backspace key from going back a page
+document.addEventListener("keydown", function(evt) {
+    if (evt.keyCode != 8) {
+        return;
+    }
+    var isText = 0;
+    var nn = evt.target.nodeName;
+    if (nn == "INPUT" || nn == "TEXTAREA") {
+        isText = 1;
+    } else if (nn == "DIV" && evt.target.contentEditable) {
+        isText = 1;
+    }
+    if (!isText) {
+        evt.preventDefault();
+    }
+});
 </script>
 %s
 
@@ -176,15 +201,20 @@ body { zoom: %f; %s }
             self.zoomFactor(),
             fontspec,
             buttonspec,
-            css, js or anki.js.jquery+anki.js.browserSel,
-    head, bodyClass, body))
+            css, jstxt,
+    head, bodyClass, body)
+        #print(html)
+        self.setHtml(html)
 
-    def setCanFocus(self, canFocus=False):
-        self._canFocus = canFocus
-        if self._canFocus:
-            self.setFocusPolicy(Qt.WheelFocus)
-        else:
-            self.setFocusPolicy(Qt.NoFocus)
+    def webBundlePath(self, path):
+        from aqt import mw
+        return "http://localhost:%d/_anki/%s" % (mw.mediaServer.port, path)
+
+    def bundledScript(self, fname):
+        return '<script src="%s"></script>' % self.webBundlePath(fname)
+
+    def bundledCSS(self, fname):
+        return '<link rel="stylesheet" type="text/css" href="%s">' % self.webBundlePath(fname)
 
     def eval(self, js):
         self.page().runJavaScript(js)

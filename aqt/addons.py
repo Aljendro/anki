@@ -1,13 +1,13 @@
 # Copyright: Damien Elmes <anki@ichi2.net>
 # -*- coding: utf-8 -*-
 # License: GNU AGPL, version 3 or later; http://www.gnu.org/licenses/agpl.html
-
+import io
 import sys, os, traceback
 from io import StringIO
 import zipfile
 from aqt.qt import *
 from aqt.utils import showInfo, openFolder, isWin, openLink, \
-    askUser, restoreGeom, saveGeom, showWarning
+    askUser, restoreGeom, saveGeom, showWarning, tooltip
 from zipfile import ZipFile
 import aqt.forms
 import aqt
@@ -17,7 +17,7 @@ from anki.lang import _
 # in the future, it would be nice to save the addon id and unzippped file list
 # to the config so that we can clear up all files and check for updates
 
-class AddonManager(object):
+class AddonManager:
 
     def __init__(self, mw):
         self.mw = mw
@@ -133,7 +133,7 @@ download add-ons that say they support Anki 2.1.x in the description.""")
             return
         # .zip file
         try:
-            z = ZipFile(StringIO(data))
+            z = ZipFile(io.BytesIO(data))
         except zipfile.BadZipfile:
             showWarning(_("The download was corrupt. Please try again."))
             return
@@ -164,11 +164,26 @@ class GetAddons(QDialog):
 
     def accept(self):
         QDialog.accept(self)
-        # create downloader thread
-        ret = download(self.mw, self.form.code.text())
-        if not ret:
+
+        # get codes
+        try:
+            ids = [int(n) for n in self.form.code.text().split()]
+        except ValueError:
+            showWarning(_("Invalid code."))
             return
-        data, fname = ret
-        self.mw.addonManager.install(data, fname)
+
+        errors = []
+
+        self.mw.progress.start(immediate=True)
+        for n in ids:
+            ret = download(self.mw, n)
+            if ret[0] == "error":
+                errors.append(_("Error downloading %(id)s: %(error)s") % dict(id=n, error=ret[1]))
+                continue
+            data, fname = ret
+            self.mw.addonManager.install(data, fname)
         self.mw.progress.finish()
-        showInfo(_("Download successful. Please restart Anki."))
+        if not errors:
+            tooltip(_("Download successful. Please restart Anki."), period=3000)
+        else:
+            showWarning("\n".join(errors))

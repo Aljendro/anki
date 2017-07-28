@@ -12,7 +12,7 @@ from anki.lang import ngettext
 from aqt.qt import *
 import anki
 import aqt.forms
-from anki.utils import fmtTimeSpan, ids2str, stripHTMLMedia, isWin, intTime, isMac
+from anki.utils import fmtTimeSpan, ids2str, stripHTMLMedia, htmlToTextLine, isWin, intTime, isMac
 from aqt.utils import saveGeom, restoreGeom, saveSplitter, restoreSplitter, \
     saveHeader, restoreHeader, saveState, restoreState, applyStyles, getTag, \
     showInfo, askUser, tooltip, openHelp, showWarning, shortcut, mungeQA
@@ -60,10 +60,14 @@ class DataModel(QAbstractTableModel):
     # Model interface
     ######################################################################
 
-    def rowCount(self, index):
+    def rowCount(self, parent):
+        if parent and parent.isValid():
+            return 0
         return len(self.cards)
 
-    def columnCount(self, index):
+    def columnCount(self, parent):
+        if parent and parent.isValid():
+            return 0
         return len(self.activeCols)
 
     def data(self, index, role):
@@ -121,10 +125,21 @@ class DataModel(QAbstractTableModel):
         # the db progress handler may cause a refresh, so we need to zero out
         # old data first
         self.cards = []
-        self.cards = self.col.findCards(txt, order=True)
-        #self.browser.mw.pm.profile['fullSearch'])
+        invalid = False
+        try:
+            self.cards = self.col.findCards(txt, order=True)
+        except Exception as e:
+            if str(e) == "invalidSearch":
+                self.cards = []
+                invalid = True
+            else:
+                raise
         #print "fetch cards in %dms" % ((time.time() - t)*1000)
         self.endReset()
+
+        if invalid:
+            showWarning(_("Invalid search - please check for typing mistakes."))
+
 
     def reset(self):
         self.beginReset()
@@ -219,7 +234,7 @@ class DataModel(QAbstractTableModel):
             return self.answer(c)
         elif type == "noteFld":
             f = c.note()
-            return self.formatQA(f.fields[self.col.models.sortIdx(f.model())])
+            return htmlToTextLine(f.fields[self.col.models.sortIdx(f.model())])
         elif type == "template":
             t = c.template()['name']
             if c.model()['type'] == MODEL_CLOZE:
@@ -268,30 +283,19 @@ class DataModel(QAbstractTableModel):
             return self.browser.mw.col.decks.name(c.did)
 
     def question(self, c):
-        return self.formatQA(c.q(browser=True))
+        return htmlToTextLine(c.q(browser=True))
 
     def answer(self, c):
         if c.template().get('bafmt'):
             # they have provided a template, use it verbatim
             c.q(browser=True)
-            return self.formatQA(c.a())
+            return htmlToTextLine(c.a())
         # need to strip question from answer
         q = self.question(c)
-        a = self.formatQA(c.a())
+        a = htmlToTextLine(c.a())
         if a.startswith(q):
             return a[len(q):].strip()
         return a
-
-    def formatQA(self, txt):
-        s = txt.replace("<br>", " ")
-        s = s.replace("<br />", " ")
-        s = s.replace("<div>", " ")
-        s = s.replace("\n", " ")
-        s = re.sub("\[sound:[^]]+\]", "", s)
-        s = re.sub("\[\[type:[^]]+\]\]", "", s)
-        s = stripHTMLMedia(s)
-        s = s.strip()
-        return s
 
     def nextDue(self, c, index):
         if c.odid:
@@ -350,6 +354,7 @@ class Browser(QMainWindow):
         applyStyles(self)
         self.mw = mw
         self.col = self.mw.col
+        self.forceClose = False
         self.lastFilter = ""
         self._previewWindow = None
         self._closeEventHasCleanedUp = False
@@ -435,7 +440,7 @@ class Browser(QMainWindow):
         self.susCut1 = QShortcut(QKeySequence("Ctrl+J"), self)
         self.susCut1.activated.connect(self.onSuspend)
         # deletion
-        self.delCut1 = QShortcut(QKeySequence("Delete"), self)
+        self.delCut1 = QShortcut(QKeySequence("Ctrl+Delete"), self)
         self.delCut1.setAutoRepeat(False)
         self.delCut1.activated.connect(self.deleteNotes)
         # add-on hook
@@ -456,7 +461,7 @@ class Browser(QMainWindow):
 
     def closeEvent(self, evt):
         if not self._closeEventHasCleanedUp:
-            if self.editor.note:
+            if self.editor.note and not self.forceClose:
                 # ignore event for now to allow us to save
                 self.editor.saveNow(self._closeEventAfterSave)
                 evt.ignore()
@@ -753,8 +758,9 @@ by clicking on one on the left."""))
     ######################################################################
 
     class CallbackItem(QTreeWidgetItem):
-        def __init__(self, root, name, onclick, oncollapse=None):
+        def __init__(self, root, name, onclick, oncollapse=None, expanded=False):
             QTreeWidgetItem.__init__(self, root, [name])
+            self.setExpanded(expanded)
             self.onclick = onclick
             self.oncollapse = oncollapse
 
@@ -861,11 +867,10 @@ by clicking on one on the left."""))
                 item = self.CallbackItem(
                     root, g[0],
                     lambda g=g: self.setFilter("deck", head+g[0]),
-                    lambda g=g: self.mw.col.decks.collapseBrowser(g[1]))
+                    lambda g=g: self.mw.col.decks.collapseBrowser(g[1]),
+                    not self.mw.col.decks.get(g[1]).get('browserCollapsed', False))
                 item.setIcon(0, QIcon(":/icons/deck16.png"))
                 newhead = head + g[0]+"::"
-                collapsed = self.mw.col.decks.get(g[1]).get('browserCollapsed', False)
-                item.setExpanded(not collapsed)
                 fillGroups(item, g[5], newhead)
         fillGroups(root, grps)
 
@@ -1060,8 +1065,8 @@ where id in %s""" % ids2str(sf))
         self.form.previewButton.setChecked(False)
 
     def _onPreviewPrev(self):
-        if self._previewState == "question":
-            self._previewState = "answer"
+        if self._previewState == "answer":
+            self._previewState = "question"
             self._renderPreview()
         else:
             self.onPreviousCard()
@@ -1081,7 +1086,8 @@ where id in %s""" % ids2str(sf))
     def _updatePreviewButtons(self):
         if not self._previewWindow:
             return
-        canBack = self.currentRow() >  0 or self._previewState == "question"
+        current = self.currentRow()
+        canBack = (current > 0 or (current == 0 and self._previewState == "answer" ))
         self._previewPrev.setEnabled(not not (self.singleCard and canBack))
         canForward = self.currentRow() < self.model.rowCount(None) - 1 or \
                      self._previewState == "question"
@@ -1114,10 +1120,13 @@ where id in %s""" % ids2str(sf))
         txt = re.sub("\[\[type:[^]]+\]\]", "", txt)
         ti = lambda x: x
         base = self.mw.baseHTML()
+        jsinc = ["jquery.js","browsersel.js",
+                 "mathjax/conf.js", "mathjax/MathJax.js",
+                 "mathjax/queue-typeset.js"]
         self._previewWeb.stdHtml(
             ti(mungeQA(self.col, txt)), self.mw.reviewer._styles(),
             bodyClass="card card%d" % (c.ord+1), head=base,
-            js=anki.js.browserSel)
+            js=jsinc)
         clearAudioQueue()
         if self.mw.reviewer.autoplay(c):
             playFromText(txt)
@@ -1512,8 +1521,12 @@ update cards set usn=?, mod=?, did=? where id in """ + scids,
         self.editor.saveNow(self._onPreviousCard)
 
     def _onPreviousCard(self):
+        tagfocus = self.editor.tags.hasFocus()
         f = self.editor.currentField
         self._moveCur(QAbstractItemView.MoveUp)
+        if tagfocus:
+            self.editor.tags.setFocus()
+            return
         self.editor.web.setFocus()
         self.editor.web.eval("focusField(%d)" % f)
 
@@ -1521,8 +1534,12 @@ update cards set usn=?, mod=?, did=? where id in """ + scids,
         self.editor.saveNow(self._onNextCard)
 
     def _onNextCard(self):
+        tagfocus = self.editor.tags.hasFocus()
         f = self.editor.currentField
         self._moveCur(QAbstractItemView.MoveDown)
+        if tagfocus:
+            self.editor.tags.setFocus()
+            return
         self.editor.web.setFocus()
         self.editor.web.eval("focusField(%d)" % f)
 
@@ -1793,9 +1810,9 @@ class BrowserToolbar(Toolbar):
                        shortcut(_("Bulk Add Tags (Ctrl+Shift+T)")))
         right += borderImg("deletetag", "deletetag16", _("Remove Tags"), shortcut(_(
                                "Bulk Remove Tags (Ctrl+Alt+T)")))
-        right += borderImg("delete", "delete16", _("Delete"))
+        right += borderImg("delete", "delete16", _("Delete"), shortcut(_("Ctrl+Delete")))
         right += "</div>"
-        return self._body % ("", right, "")
+        return self._body % right
 
     def css(self):
         return self._css + """
@@ -1837,7 +1854,7 @@ class FavouritesLineEdit(QLineEdit):
     buttonClicked = pyqtSignal(bool)
 
     def __init__(self, mw, browser, parent=None):
-        super(FavouritesLineEdit, self).__init__(parent)
+        super().__init__(parent)
         self.mw = mw
         self.browser = browser
         # add conf if missing
@@ -1861,13 +1878,13 @@ class FavouritesLineEdit(QLineEdit):
         self.button.move(self.rect().right() - frameWidth - buttonSize.width(),
                          (self.rect().bottom() - buttonSize.height() + 1) / 2)
         self.setTextMargins(0, 0, buttonSize.width() * 1.5, 0)
-        super(FavouritesLineEdit, self).resizeEvent(event)
+        super().resizeEvent(event)
 
     def setIcon(self, path):
         self.button.setIcon(QIcon(path))
 
     def setText(self, txt):
-        super(FavouritesLineEdit, self).setText(txt)
+        super().setText(txt)
         self.updateButton()
         
     def updateButton(self, reset=True):

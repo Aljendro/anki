@@ -3,6 +3,7 @@
 import time
 import copy
 
+from anki.consts import STARTING_FACTOR
 from tests.shared import  getEmptyCol
 from anki.utils import  intTime
 from anki.hooks import addHook
@@ -278,7 +279,7 @@ def test_reviews():
     c.type = 2
     c.queue = 2
     c.due = d.sched.today - 8
-    c.factor = 2500
+    c.factor = STARTING_FACTOR
     c.reps = 3
     c.lapses = 1
     c.ivl = 100
@@ -332,7 +333,7 @@ def test_reviews():
     assert checkRevIvl(d, c, 260)
     assert c.due == d.sched.today + c.ivl
     # factor should have been left alone
-    assert c.factor == 2500
+    assert c.factor == STARTING_FACTOR
     # ease 4
     ##################################################
     c = copy.copy(cardcopy)
@@ -393,7 +394,7 @@ def test_overdue_lapse():
     c.queue = 1
     c.due = -1
     c.odue = -1
-    c.factor = 2500
+    c.factor = STARTING_FACTOR
     c.left = 2002
     c.ivl = 0
     c.flush()
@@ -467,7 +468,7 @@ def test_nextIvl():
     ##################################################
     c.type = 2
     c.ivl = 100
-    c.factor = 2500
+    c.factor = STARTING_FACTOR
     assert ni(c, 1) == 60
     assert ni(c, 2) == 100*86400
     assert ni(c, 3) == 100*86400
@@ -475,7 +476,7 @@ def test_nextIvl():
     ##################################################
     c.queue = 2
     c.ivl = 100
-    c.factor = 2500
+    c.factor = STARTING_FACTOR
     # failing it should put it at 60s
     assert ni(c, 1) == 60
     # or 1 day if relearn is false
@@ -557,7 +558,7 @@ def test_cram():
     # due in 25 days, so it's been waiting 75 days
     c.due = d.sched.today + 25
     c.mod = 1
-    c.factor = 2500
+    c.factor = STARTING_FACTOR
     c.startTimer()
     c.flush()
     d.reset()
@@ -642,7 +643,9 @@ def test_cram():
     c.load()
     assert d.sched.answerButtons(c) == 4
     # add a sibling so we can test minSpace, etc
+    c.col = None
     c2 = copy.deepcopy(c)
+    c2.col = c.col = d
     c2.id = 123
     c2.ord = 1
     c2.due = 325
@@ -699,7 +702,7 @@ def test_cram_resched():
     c.ivl = 100
     c.type = c.queue = 2
     c.due = d.sched.today + 25
-    c.factor = 2500
+    c.factor = STARTING_FACTOR
     c.flush()
     cardcopy = copy.copy(c)
     d.sched.rebuildDyn(did)
@@ -1078,7 +1081,7 @@ def test_norelearn():
     c.type = 2
     c.queue = 2
     c.due = 0
-    c.factor = 2500
+    c.factor = STARTING_FACTOR
     c.reps = 3
     c.lapses = 1
     c.ivl = 100
@@ -1099,7 +1102,7 @@ def test_failmult():
     c.queue = 2
     c.ivl = 100
     c.due = d.sched.today - c.ivl
-    c.factor = 2500
+    c.factor = STARTING_FACTOR
     c.reps = 3
     c.lapses = 1
     c.startTimer()

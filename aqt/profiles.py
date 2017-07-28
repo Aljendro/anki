@@ -9,6 +9,8 @@
 import os
 import random
 import pickle
+import shutil
+
 import locale
 import re
 
@@ -58,17 +60,13 @@ profileConf = dict(
     importMode=1,
 )
 
-class ProfileManager(object):
+class ProfileManager:
 
     def __init__(self, base=None, profile=None):
         self.name = None
         self.db = None
         # instantiate base folder
-        if base:
-            self.base = os.path.abspath(base)
-        else:
-            self.base = self._defaultBase()
-        self.ensureBaseExists()
+        self._setBaseFolder(base)
         # load metadata
         self.firstRun = self._loadMeta()
         # did the user request a profile to start up with?
@@ -96,6 +94,36 @@ read-only and you have permission to write to it. If you cannot fix this \
 issue, please see the documentation for information on running Anki from \
 a flash drive.""" % self.base)
             raise
+
+    # Folder migration
+    ######################################################################
+
+    def _oldFolderLocation(self):
+        if isMac:
+            return os.path.expanduser("~/Documents/Anki")
+        elif isWin:
+            loc = QStandardPaths.writableLocation(QStandardPaths.DocumentsLocation)
+            return os.path.join(loc, "Anki")
+        else:
+            p = os.path.expanduser("~/Anki")
+            if os.path.exists(p):
+                return p
+            else:
+                loc = QStandardPaths.writableLocation(QStandardPaths.DocumentsLocation)
+                if loc[:-1] == QStandardPaths.writableLocation(
+                        QStandardPaths.HomeLocation):
+                    # occasionally "documentsLocation" will return the home
+                    # folder because the Documents folder isn't configured
+                    # properly; fall back to an English path
+                    return os.path.expanduser("~/Documents/Anki")
+                else:
+                    return os.path.join(loc, "Anki")
+
+    def maybeMigrateFolder(self):
+        oldBase = self._oldFolderLocation()
+
+        if not os.path.exists(self.base) and os.path.exists(oldBase):
+            shutil.move(oldBase, self.base)
 
     # Profile load/save
     ######################################################################
@@ -208,27 +236,32 @@ and no other programs are accessing your profile folders, then try again."""))
             os.makedirs(path)
         return path
 
+    def _setBaseFolder(self, cmdlineBase):
+        if cmdlineBase:
+            self.base = os.path.abspath(cmdlineBase)
+        elif os.environ.get("ANKI_BASE"):
+            self.base = os.path.abspath(os.environ["ANKI_BASE"])
+        else:
+            self.base = self._defaultBase()
+            self.maybeMigrateFolder()
+        self.ensureBaseExists()
+
     def _defaultBase(self):
         if isWin:
-            loc = QStandardPaths.writableLocation(QStandardPaths.DocumentsLocation)
-            return os.path.join(loc, "Anki")
+            loc = QStandardPaths.writableLocation(QStandardPaths.AppDataLocation)
+            # the returned value seem to automatically include the app name, but we use Anki2 rather
+            # than Anki
+            assert loc.endswith("/Anki")
+            loc += "2"
+            return loc
         elif isMac:
-            return os.path.expanduser("~/Documents/Anki")
+            return os.path.expanduser("~/Library/Application Support/Anki2")
         else:
-            # use Documents/Anki on new installs, ~/Anki on existing ones
-            p = os.path.expanduser("~/Anki")
-            if os.path.exists(p):
-                return p
-            else:
-                loc = QStandardPaths.writableLocation(QStandardPaths.DocumentsLocation)
-                if loc[:-1] == QStandardPaths.writableLocation(
-                        QStandardPaths.HomeLocation):
-                    # occasionally "documentsLocation" will return the home
-                    # folder because the Documents folder isn't configured
-                    # properly; fall back to an English path
-                    return os.path.expanduser("~/Documents/Anki")
-                else:
-                    return os.path.join(loc, "Anki")
+            dataDir = os.environ.get(
+                "XDG_DATA_HOME", os.path.expanduser("~/.local/share"))
+            if not os.path.exists(dataDir):
+                os.makedirs(dataDir)
+            return os.path.join(dataDir, "Anki2")
 
     def _loadMeta(self):
         path = os.path.join(self.base, "prefs21.db")

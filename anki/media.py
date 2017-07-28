@@ -15,7 +15,7 @@ from anki.db import DB
 from anki.consts import *
 from anki.latex import mungeQA
 
-class MediaManager(object):
+class MediaManager:
 
     soundRegexps = ["(?i)(\[sound:(?P<fname>[^]]+)\])"]
     imgRegexps = [
@@ -444,8 +444,11 @@ create table meta (dirMod int, lastUsn int); insert into meta values (0, 0);
     def forceResync(self):
         self.db.execute("delete from media")
         self.db.execute("update meta set lastUsn=0,dirMod=0")
-        self.db.execute("vacuum analyze")
         self.db.commit()
+        self.db.setAutocommit(True)
+        self.db.execute("vacuum")
+        self.db.execute("analyze")
+        self.db.setAutocommit(False)
 
     # Media syncing: zips
     ##########################################################################
@@ -469,7 +472,7 @@ create table meta (dirMod int, lastUsn int); insert into meta values (0, 0);
 
             if csum:
                 self.col.log("+media zip", fname)
-                z.writestr(fname, str(c))
+                z.write(fname, str(c))
                 meta.append((normname, str(c)))
                 sz += os.path.getsize(fname)
             else:

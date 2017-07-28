@@ -5,18 +5,11 @@
 import os
 import time
 
-try:
-    from pysqlite2 import dbapi2 as sqlite
-    vi = sqlite.version_info
-    if vi[0] > 2 or vi[1] > 6:
-        # latest pysqlite breaks anki
-        raise ImportError()
-except ImportError:
-    from sqlite3 import dbapi2 as sqlite
+from sqlite3 import dbapi2 as sqlite
 
 Error = sqlite.Error
 
-class DB(object):
+class DB:
     def __init__(self, path, timeout=0):
         self._db = sqlite.connect(path, timeout=timeout)
         self._path = path
@@ -103,3 +96,9 @@ class DB(object):
 
     def interrupt(self):
         self._db.interrupt()
+
+    def setAutocommit(self, autocommit):
+        if autocommit:
+            self._db.isolation_level = None
+        else:
+            self._db.isolation_level = ''

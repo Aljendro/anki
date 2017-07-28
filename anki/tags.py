@@ -14,7 +14,7 @@ tracked, so unused tags can only be removed from the list with a DB check.
 This module manages the tag cache and tags for notes.
 """
 
-class TagManager(object):
+class TagManager:
 
     # Registry save/load
     #############################################################
@@ -89,7 +89,8 @@ class TagManager(object):
         if not newTags:
             return
         # cache tag names
-        self.register(newTags)
+        if add:
+            self.register(newTags)
         # find notes missing the tags
         if add:
             l = "tags not "
@@ -102,7 +103,7 @@ class TagManager(object):
         res = self.col.db.all(
             "select id, tags from notes where id in %s and (%s)" % (
                 ids2str(ids), lim),
-            **dict([("_%d" % x, '%% %s %%' % y)
+            **dict([("_%d" % x, '%% %s %%' % y.replace('*', '%'))
                     for x, y in enumerate(newTags)]))
         # update tags
         nids = []
@@ -139,13 +140,16 @@ class TagManager(object):
         return self.join(self.canonify(currentTags))
 
     def remFromStr(self, deltags, tags):
-        "Delete tags if they don't exists."
+        "Delete tags if they exist."
+        def wildcard(pat, str):
+            pat = re.escape(pat).replace('\\*', '.*')
+            return re.search(pat, str, re.IGNORECASE)
         currentTags = self.split(tags)
         for tag in self.split(deltags):
             # find tags, ignoring case
             remove = []
             for tx in currentTags:
-                if tag.lower() == tx.lower():
+                if (tag.lower() == tx.lower()) or wildcard(tag, tx):
                     remove.append(tx)
             # remove them
             for r in remove:

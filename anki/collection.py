@@ -49,7 +49,7 @@ defaultConf = {
 }
 
 # this is initialized by storage.Collection
-class _Collection(object):
+class _Collection:
 
     def __init__(self, db, server=False, log=False):
         self._debugLog = log
@@ -134,9 +134,10 @@ crt=?, mod=?, scm=?, dty=?, usn=?, ls=?, conf=?""",
         self._lastSave = time.time()
 
     def autosave(self):
-        "Save if 5 minutes has passed since last save."
+        "Save if 5 minutes has passed since last save. True if saved."
         if time.time() - self._lastSave > 300:
             self.save()
+            return True
 
     def lock(self):
         # make sure we don't accidentally bump mod time
@@ -150,9 +151,11 @@ crt=?, mod=?, scm=?, dty=?, usn=?, ls=?, conf=?""",
             if save:
                 self.save()
             else:
-                self.rollback()
+                self.db.rollback()
             if not self.server:
+                self.db.setAutocommit(True)
                 self.db.execute("pragma journal_mode = delete")
+                self.db.setAutocommit(False)
             self.db.close()
             self.db = None
             self.media.close()
@@ -200,6 +203,7 @@ crt=?, mod=?, scm=?, dty=?, usn=?, ls=?, conf=?""",
         self.modSchema(check=False)
         self.ls = self.scm
         # ensure db is compacted before upload
+        self.db.setAutocommit(True)
         self.db.execute("vacuum")
         self.db.execute("analyze")
         self.close()
@@ -790,12 +794,12 @@ and queue = 0""", intTime(), self.usn())
             "select max(due)+1 from cards where type = 0") or 0
         # reviews should have a reasonable due #
         ids = self.db.list(
-            "select id from cards where queue = 2 and due > 10000")
+            "select id from cards where queue = 2 and due > 100000")
         if ids:
             problems.append("Reviews had incorrect due date.")
             self.db.execute(
-                "update cards set due = 0, mod = ?, usn = ? where id in %s"
-                % ids2str(ids), intTime(), self.usn())
+                "update cards set due = ?, ivl = 1, mod = ?, usn = ? where id in %s"
+                % ids2str(ids), self.sched.today, intTime(), self.usn())
         # and finally, optimize
         self.optimize()
         newSize = os.stat(self.path)[stat.ST_SIZE]
@@ -809,8 +813,10 @@ and queue = 0""", intTime(), self.usn())
         return ("\n".join(problems), ok)
 
     def optimize(self):
+        self.db.setAutocommit(True)
         self.db.execute("vacuum")
         self.db.execute("analyze")
+        self.db.setAutocommit(False)
         self.lock()
 
     # Logging

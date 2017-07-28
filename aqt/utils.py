@@ -7,6 +7,14 @@ import re, os, sys, urllib.request, urllib.parse, urllib.error, subprocess
 import aqt
 from anki.sound import stripSounds
 from anki.utils import isWin, isMac, invalidFilename
+from contextlib import contextmanager
+
+@contextmanager
+def noBundledLibs():
+    oldlpath = os.environ.pop("LD_LIBRARY_PATH", None)
+    yield
+    if oldlpath is not None:
+        os.environ["LD_LIBRARY_PATH"] = oldlpath
 
 def openHelp(section):
     link = aqt.appHelpSite
@@ -16,7 +24,8 @@ def openHelp(section):
 
 def openLink(link):
     tooltip(_("Loading..."), period=1000)
-    QDesktopServices.openUrl(QUrl(link))
+    with noBundledLibs():
+        QDesktopServices.openUrl(QUrl(link))
 
 def showWarning(text, parent=None, help="", title="Anki"):
     "Show a small warning with an OK button."
@@ -71,6 +80,10 @@ def showText(txt, parent=None, type="text", run=True, geomKey=None, \
             saveGeom(diag, geomKey)
         QDialog.reject(diag)
     box.rejected.connect(onReject)
+    def onFinish():
+        if geomKey:
+            saveGeom(diag, geomKey)
+    box.accepted.connect(onFinish)
     diag.setMinimumHeight(minHeight)
     diag.setMinimumWidth(minWidth)
     if geomKey:
@@ -180,13 +193,18 @@ class GetTextDialog(QDialog):
     def helpRequested(self):
         openHelp(self.help)
 
-def getText(prompt, parent=None, help=None, edit=None, default="", title="Anki"):
+def getText(prompt, parent=None, help=None, edit=None, default="",
+            title="Anki", geomKey=None, **kwargs):
     if not parent:
         parent = aqt.mw.app.activeWindow() or aqt.mw
     d = GetTextDialog(parent, prompt, help=help, edit=edit,
-                      default=default, title=title)
+                      default=default, title=title, **kwargs)
     d.setWindowModality(Qt.WindowModal)
+    if geomKey:
+        restoreGeom(d, geomKey)
     ret = d.exec_()
+    if geomKey and ret:
+        saveGeom(d, geomKey)
     return (str(d.l.text()), ret)
 
 def getOnlyText(*args, **kwargs):
@@ -220,7 +238,8 @@ def getTag(parent, deck, question, tags="user", **kwargs):
     from aqt.tagedit import TagEdit
     te = TagEdit(parent)
     te.setCol(deck)
-    ret = getText(question, parent, edit=te, **kwargs)
+    ret = getText(question, parent, edit=te,
+                  geomKey='getTag', **kwargs)
     te.hideCompleter()
     return ret
 
@@ -325,12 +344,6 @@ def restoreHeader(widget, key):
 def mungeQA(col, txt):
     txt = col.media.escapeImages(txt)
     txt = stripSounds(txt)
-    # osx webkit doesn't understand font weight 600
-    txt = re.sub("font-weight: *600", "font-weight:bold", txt)
-    if isMac:
-        # custom fonts cause crashes on osx at the moment
-        txt = txt.replace("font-face", "invalid")
-
     return txt
 
 def applyStyles(widget):
@@ -345,13 +358,10 @@ def getBase(col):
 
 def openFolder(path):
     if isWin:
-        subprocess.Popen(["explorer", path])
+        subprocess.Popen(["explorer", "file://"+path])
     else:
-        oldlpath = os.environ.get("LD_LIBRARY_PATH")
-        del os.environ["LD_LIBRARY_PATH"]
-        QDesktopServices.openUrl(QUrl("file://" + path))
-        if oldlpath:
-            os.environ["LD_LIBRARY_PATH"] = oldlpath
+        with noBundledLibs():
+            QDesktopServices.openUrl(QUrl("file://" + path))
 
 def shortcut(key):
     if isMac:

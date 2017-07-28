@@ -13,7 +13,7 @@ from anki.hooks import *
 # Find
 ##########################################################################
 
-class Finder(object):
+class Finder:
 
     def __init__(self, col):
         self.col = col
@@ -38,7 +38,7 @@ class Finder(object):
         tokens = self._tokenize(query)
         preds, args = self._where(tokens)
         if preds is None:
-            return []
+            raise Exception("invalidSearch")
         order, rev = self._order(order)
         sql = self._query(preds, order)
         try:
@@ -246,10 +246,10 @@ select distinct(n.id) from cards c, notes n where c.nid=n.id and """+preds
         val = val.replace("*", "%")
         if not val.startswith("%"):
             val = "% " + val
-        if not val.endswith("%"):
+        if not val.endswith("%") or val.endswith('\\%'):
             val += " %"
         args.append(val)
-        return "n.tags like ?"
+        return "n.tags like ? escape '\\'"
 
     def _findCardState(self, args):
         (val, args) = args

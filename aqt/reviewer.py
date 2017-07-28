@@ -19,7 +19,7 @@ from aqt.sound import getAudio
 import aqt
 
 
-class Reviewer(object):
+class Reviewer:
     "Manage reviews.  Maintains a separate state."
 
     def __init__(self, mw):
@@ -33,16 +33,12 @@ class Reviewer(object):
         self.typeCorrect = None # web init happens before this is set
         self.state = None
         self.bottom = aqt.toolbar.BottomBar(mw, mw.bottomWeb)
-        # qshortcut so we don't autorepeat
-        self.delShortcut = QShortcut(QKeySequence("Delete"), self.mw)
-        self.delShortcut.setAutoRepeat(False)
-        self.delShortcut.activated.connect(self.onDelete)
         addHook("leech", self.onLeech)
 
     def show(self):
         self.mw.col.reset()
         self.web.resetHandlers()
-        self.mw.keyHandler = self._keyHandler
+        self.mw.setStateShortcuts(self._shortcutKeys())
         self.web.onBridgeCmd = self._linkHandler
         self.bottom.web.onBridgeCmd = self._linkHandler
         self._reps = None
@@ -125,42 +121,6 @@ class Reviewer(object):
     _revHtml = """
 <img src="qrc:/icons/rating.png" id=star class=marked>
 <div id=qa></div>
-<script>
-var ankiPlatform = "desktop";
-var typeans;
-function _updateQA (q, answerMode, klass) {
-    $("#qa").html(q);
-    typeans = document.getElementById("typeans");
-    if (typeans) {
-        typeans.focus();
-    }
-    if (answerMode) {
-        var e = $("#answer");
-        if (e[0]) { e[0].scrollIntoView(); }
-    } else {
-        window.scrollTo(0, 0);
-    }
-    if (klass) {
-        document.body.className = klass;
-    }
-    // don't allow drags of images, which cause them to be deleted
-    $("img").attr("draggable", false);
-};
-
-function _toggleStar (show) {
-    if (show) {
-        $(".marked").show();
-    } else {
-        $(".marked").hide();
-    }
-}
-
-function _typeAnsPress() {
-    if (window.event.keyCode === 13) {
-        pycmd("ans");
-    }
-}
-</script>
 """
 
     def _initWeb(self):
@@ -169,13 +129,20 @@ function _typeAnsPress() {
         base = self.mw.baseHTML()
         # main window
         self.web.onLoadFinished = self._showQuestion
-        self.web.stdHtml(self._revHtml, self._styles(), head=base)
+        self.web.stdHtml(self._revHtml, self._styles(), head=base,
+                         js=["jquery.js",
+                             "browsersel.js",
+                             "mathjax/conf.js",
+                             "mathjax/MathJax.js",
+                             "reviewer.js"])
         # show answer / ease buttons
         self.bottom.web.show()
         self.bottom.web.onLoadFinished = self._onBottomLoadFinished
         self.bottom.web.stdHtml(
             self._bottomHTML(),
-            self.bottom._css + self._bottomCSS)
+            self.bottom._css + self._bottomCSS,
+            js=["jquery.js", "reviewer-bottom.js"]
+        )
 
     # Showing the question
     ##########################################################################
@@ -198,6 +165,7 @@ The front of this card is empty. Please run Tools>Empty Cards.""")
             playFromText(q)
         # render & update bottom
         q = self._mungeQA(q)
+        q += self._hiddenUpcomingImages()
         klass = "card card%d" % (c.ord+1)
         self.web.eval("_updateQA(%s, false, '%s');" % (json.dumps(q), klass))
         self._toggleStar()
@@ -259,38 +227,68 @@ The front of this card is empty. Please run Tools>Empty Cards.""")
         self.mw.autosave()
         self.nextCard()
 
+    # Image preloading
+    ##########################################################################
+
+    def _hiddenUpcomingImages(self):
+        return "<div style='display:none;'>"+self._upcomingImages()+"</div>"
+
+    def _upcomingImages(self):
+        # grab the top cards in each queue
+        s = self.mw.col.sched
+        cids = []
+        cids.append(s._lrnQueue and s._lrnQueue[0][1])
+        cids.append(s._revQueue and s._revQueue[0])
+        cids.append(s._newQueue and s._newQueue[0])
+
+        # gather their content
+        qa = []
+        for cid in cids:
+            if not cid:
+                continue
+            c = self.mw.col.getCard(cid)
+            qa.append(c.q())
+            qa.append(c.a())
+
+        # pluck image links out
+        qa = "".join(qa)
+        links = []
+        for regex in self.mw.col.media.imgRegexps:
+            links.extend(re.findall(regex, qa))
+
+        return "".join([x[0] for x in links])
+
     # Handlers
     ############################################################
 
-    def _keyHandler(self, evt):
-        key = str(evt.text())
-        if key == "e":
-            self.mw.onEditCurrent()
-        elif (key == " " or evt.key() in (Qt.Key_Return, Qt.Key_Enter)):
-            if self.state == "question":
-                self._getTypedAnswer()
-            elif self.state == "answer":
-                self._answerCard(self._defaultEase())
-        elif key == "r" or evt.key() == Qt.Key_F5:
-            self.replayAudio()
-        elif key == "*":
-            self.onMark()
-        elif key == "=":
-            self.onBuryNote()
-        elif key == "-":
-            self.onBuryCard()
-        elif key == "!":
-            self.onSuspend()
-        elif key == "@":
-            self.onSuspendCard()
-        elif key == "V":
-            self.onRecordVoice()
-        elif key == "o":
-            self.onOptions()
-        elif key in ("1", "2", "3", "4"):
-            self._answerCard(int(key))
-        elif key == "v":
-            self.onReplayRecorded()
+    def _shortcutKeys(self):
+        return [
+            ("e", self.mw.onEditCurrent),
+            (" ", self.onEnterKey),
+            (Qt.Key_Return, self.onEnterKey),
+            (Qt.Key_Enter, self.onEnterKey),
+            ("r", self.replayAudio),
+            (Qt.Key_F5, self.replayAudio),
+            ("*", self.onMark),
+            ("=", self.onBuryNote),
+            ("-", self.onBuryCard),
+            ("!", self.onSuspend),
+            ("@", self.onSuspendCard),
+            ("Ctrl+Delete", self.onDelete),
+            ("v", self.onReplayRecorded),
+            ("Shift+v", self.onRecordVoice),
+            ("o", self.onOptions),
+            ("1", lambda: self._answerCard(1)),
+            ("2", lambda: self._answerCard(2)),
+            ("3", lambda: self._answerCard(3)),
+            ("4", lambda: self._answerCard(4)),
+        ]
+
+    def onEnterKey(self):
+        if self.state == "question":
+            self._getTypedAnswer()
+        elif self.state == "answer":
+            self._answerCard(self._defaultEase())
 
     def _linkHandler(self, url):
         if url == "ans":
@@ -507,8 +505,6 @@ min-width: 60px; white-space: nowrap;
 .spacer2 { height: 16px; }
 #outer {
   border-top: 1px solid #aaa;
-  background: -webkit-gradient(linear, left top, left bottom,
-from(#fff), to(#ddd));
 }
 #innertable {
 padding: 3px;
@@ -534,46 +530,7 @@ padding: 3px;
 </table>
 </center>
 <script>
-var time = %(time)d;
-var maxTime = 0;
-$(function () {
-$("#ansbut").focus();
-updateTime();
-setInterval(function () { time += 1; updateTime() }, 1000);
-});
-
-var updateTime = function () {
-    if (!maxTime) {
-        $("#time").text("");
-        return;
-    }
-    time = Math.min(maxTime, time);
-    var m = Math.floor(time / 60);
-    var s = time %% 60;
-    if (s < 10) {
-        s = "0" + s;
-    }
-    var e = $("#time");
-    if (maxTime == time) {
-        e.html("<font color=red>" + m + ":" + s + "</font>");
-    } else {
-        e.text(m + ":" + s);
-    }
-}
-
-function showQuestion(txt, maxTime_) {
-  // much faster than jquery's .html()
-  $("#middle")[0].innerHTML = txt;
-  $("#ansbut").focus();
-  time = 0;
-  maxTime = maxTime_;
-}
-
-function showAnswer(txt) {
-  $("#middle")[0].innerHTML = txt;
-  $("#defease").focus();
-}
-
+time = %(time)d;
 </script>
 """ % dict(rem=self._remaining(), edit=_("Edit"),
            editkey=_("Shortcut key: %s") % "E",
@@ -686,7 +643,7 @@ function showAnswer(txt) {
             [_("Bury Note"), "=", self.onBuryNote],
             [_("Suspend Card"), "@", self.onSuspendCard],
             [_("Suspend Note"), "!", self.onSuspend],
-            [_("Delete Note"), "Delete", self.onDelete],
+            [_("Delete Note"), "Ctrl+Delete", self.onDelete],
             [_("Options"), "O", self.onOptions],
             None,
             [_("Replay Audio"), "R", self.replayAudio],
@@ -700,7 +657,8 @@ function showAnswer(txt) {
                 continue
             label, scut, func = row
             a = m.addAction(label)
-            a.setShortcut(QKeySequence(scut))
+            if scut:
+                a.setShortcut(QKeySequence(scut))
             a.triggered.connect(func)
         runHook("Reviewer.contextMenuEvent",self,m)
         m.exec_(QCursor.pos())

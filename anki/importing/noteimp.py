@@ -3,7 +3,10 @@
 # License: GNU AGPL, version 3 or later; http://www.gnu.org/licenses/agpl.html
 
 import  cgi
-from anki.consts import NEW_CARDS_RANDOM
+
+import unicodedata
+
+from anki.consts import NEW_CARDS_RANDOM, STARTING_FACTOR
 from anki.lang import _
 from anki.utils import fieldChecksum, guid64, timestampID, \
     joinFields, intTime, splitFields
@@ -13,7 +16,7 @@ from anki.lang import ngettext
 # Stores a list of fields, tags and deck
 ######################################################################
 
-class ForeignNote(object):
+class ForeignNote:
     "An temporary object storing fields and attributes."
     def __init__(self):
         self.fields = []
@@ -21,11 +24,11 @@ class ForeignNote(object):
         self.deck = None
         self.cards = {} # map of ord -> card
 
-class ForeignCard(object):
+class ForeignCard:
     def __init__(self):
         self.due = 0
         self.ivl = 1
-        self.factor = 2500
+        self.factor = STARTING_FACTOR
         self.reps = 0
         self.lapses = 0
 
@@ -126,6 +129,8 @@ class NoteImporter(Importer):
                 n.fields[c] = n.fields[c].strip()
                 if not self.allowHTML:
                     n.fields[c] = n.fields[c].replace("\n", "<br>")
+                n.fields[c] = unicodedata.normalize("NFC", n.fields[c])
+            n.tags = [unicodedata.normalize("NFC", t) for t in n.tags]
             fld0 = n.fields[fld0idx]
             csum = fieldChecksum(fld0)
             # first field must exist

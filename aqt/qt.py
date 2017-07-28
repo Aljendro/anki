@@ -36,6 +36,7 @@ if os.environ.get("DEBUG"):
 
 qtmajor = (QT_VERSION & 0xff0000) >> 16
 qtminor = (QT_VERSION & 0x00ff00) >> 8
+qtpoint = QT_VERSION & 0xff
 
-if qtmajor < 5 or (qtmajor == 5 and qtminor < 5):
-    raise Exception("Qt must be 5.5+")
+if qtmajor < 5 or (qtmajor == 5 and qtminor < 9):
+    raise Exception("Anki requires Qt 5.9.0+")

@@ -15,7 +15,7 @@ from aqt.qt import *
 import anki.lang
 from anki.consts import HELP_SITE
 from anki.lang import langDir
-from anki.utils import isMac
+from anki.utils import isMac, isLin
 
 appVersion=_version
 appWebsite="http://ankisrs.net/"
@@ -41,20 +41,22 @@ from anki.utils import checksum
 # Dialog manager - manages modeless windows
 ##########################################################################emacs
 
-class DialogManager(object):
+class DialogManager:
 
     def __init__(self):
-        from aqt import addcards, browser, editcurrent
+        from aqt import addcards, browser, editcurrent, stats, about
         self._dialogs = {
             "AddCards": [addcards.AddCards, None],
             "Browser": [browser.Browser, None],
             "EditCurrent": [editcurrent.EditCurrent, None],
+            "DeckStats": [stats.DeckStats, None],
+            "About": [about.show, None],
         }
 
     def open(self, name, *args):
         (creator, instance) = self._dialogs[name]
         if instance:
-            instance.setWindowState(instance.windowState() | Qt.WindowActive)
+            instance.setWindowState(Qt.WindowNoState)
             instance.activateWindow()
             instance.raise_()
             return instance
@@ -208,9 +210,11 @@ def _run():
     opts.profile = opts.profile or ""
 
     # on osx we'll need to add the qt plugins to the search path
-    if isMac and getattr(sys, 'frozen', None):
-        rd = os.path.abspath(moduleDir + "/../../../plugins")
-        QCoreApplication.setLibraryPaths([rd])
+
+    # work around pyqt loading wrong GL library
+    if isLin:
+        import ctypes
+        ctypes.CDLL('libGL.so.1', ctypes.RTLD_GLOBAL)
 
     # create the app
     app = AnkiApp(sys.argv)
@@ -242,6 +246,8 @@ environment points to a valid, writable folder.""")
 
     # remaining pm init
     pm.ensureProfile()
+
+    print("This is an BETA build - please do not package it up for Linux distributions")
 
     # load the main window
     import aqt.main

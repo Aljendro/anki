@@ -7,7 +7,7 @@ from anki.utils import isMac
 import aqt
 from anki.sound import clearAudioQueue
 
-class Overview(object):
+class Overview:
     "Deck overview."
 
     def __init__(self, mw):
@@ -19,7 +19,7 @@ class Overview(object):
         clearAudioQueue()
         self.web.resetHandlers()
         self.web.onBridgeCmd = self._linkHandler
-        self.mw.keyHandler = self._keyHandler
+        self.mw.setStateShortcuts(self._shortcutKeys())
         self.refresh()
 
     def refresh(self):
@@ -63,22 +63,35 @@ class Overview(object):
             openLink(url)
         return False
 
-    def _keyHandler(self, evt):
-        cram = self.mw.col.decks.current()['dyn']
-        key = str(evt.text())
-        if key == "o":
-            self.mw.onDeckConf()
-        if key == "r" and cram:
+    def _shortcutKeys(self):
+        return [
+            ("o", self.mw.onDeckConf),
+            ("r", self.onRebuildKey),
+            ("e", self.onEmptyKey),
+            ("c", self.onCustomStudyKey),
+            ("u", self.onUnburyKey)
+        ]
+
+    def _filteredDeck(self):
+        return self.mw.col.decks.current()['dyn']
+
+    def onRebuildKey(self):
+        if self._filteredDeck():
             self.mw.col.sched.rebuildDyn()
             self.mw.reset()
-        if key == "e" and cram:
+
+    def onEmptyKey(self):
+        if self._filteredDeck():
             self.mw.col.sched.emptyDyn(self.mw.col.decks.selected())
             self.mw.reset()
-        if key == "c" and not cram:
+
+    def onCustomStudyKey(self):
+        if not self._filteredDeck():
             self.onStudyMore()
-        if key == "u":
-            self.mw.col.sched.unburyCardsForDeck()
-            self.mw.reset()
+
+    def onUnburyKey(self):
+        self.mw.col.sched.unburyCardsForDeck()
+        self.mw.reset()
 
     # HTML
     ############################################################

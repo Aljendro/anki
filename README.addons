@@ -1,14 +1,10 @@
 Porting add-ons to Anki 2.1
 ---------------------------
 
-2.1 is still in alpha and prone to change, so you may wish to wait until it
-hits beta before starting to update add-ons. But if you'd like to dive in
-straight away, here are some tips on porting.
-
 Python 3
 ---------
 
-Anki 2.1 requires Python 3.4 or later. After installing Python 3 on your
+Anki 2.1 requires Python 3.5 or later. After installing Python 3 on your
 machine, you can use the 2to3 tool to automatically convert your existing
 scripts to Python 3 code on a folder by folder basis, like:
 
@@ -18,9 +14,6 @@ mv aqt3 aqt
 
 Most simple code can be converted automatically, but there may be parts of the
 code that you need to manually modify.
-
-Add-ons that don't deal with file access and bytestrings may well work on both
-Python 2 and 3 without any special work required.
 
 Qt5 / PyQt5
 ------------
@@ -32,12 +25,39 @@ may find they still work in Anki 2.0.x as well.
 More info is available at
 http://pyqt.sourceforge.net/Docs/PyQt4/new_style_signals_slots.html
 
-Changes in Anki
+One add-on author reported that the following tool was useful to automatically
+convert the code:
+https://github.com/rferrazz/pyqt4topyqt5
+
+Compatibility with Anki 2.0
+----------------------------
+
+It should be possible for many add-ons to support both Anki 2.0 and 2.1 at the
+same time.
+
+Most Python 3 code will run on Python 2 as well, though extra work may be
+required when dealing with file access and byte strings.
+
+The Qt modules are in 'PyQt5' instead of 'PyQt4'. You can do a conditional
+import, but an easier way is to import from aqt.qt - eg "from aqt.qt import *"
+
+The most difficult part is the change from the unsupported QtWebKit to
+QtWebEngine. If you do any non-trivial work with webviews, some work will be
+required to port your code to Anki 2.1, as described in the next section.
+
+If you find that non-trivial changes are required to get your add-on working
+with Anki 2.1, the easiest option is to drop support for older Anki versions.
+Please see the 'sharing updated add-ons' section below for more information.
+
+Webview changes
 ----------------
 
-Qt 5 has deprecated WebKit in favour of the Chromium-based WebEngine, so
+Qt 5 has dropped WebKit in favour of the Chromium-based WebEngine, so
 Anki's webviews are now using WebEngine. Of note:
 
+- You can now debug the webviews using an external Chrome instance, by setting
+  the env var QTWEBENGINE_REMOTE_DEBUGGING to 8080 prior to starting Anki,
+  then surfing to localhost:8080 in Chrome.
 - WebEngine uses a different method of communicating back to Python.
   AnkiWebView() is a wrapper for webviews which provides a pycmd(str) function in
   Javascript which will call the ankiwebview's onBridgeCmd(str) method. Various
@@ -50,10 +70,13 @@ Anki's webviews are now using WebEngine. Of note:
   call editor.saveNow() first and then run the rest of your code in the callback.
   Calls to .onSearch() will need to be changed to .search()/.onSearchActivated()
   as well. See the browser's .deleteNotes() for an example.
-- You can now debug the webviews using an external Chrome instance, by setting
-  the env var QTWEBENGINE_REMOTE_DEBUGGING to 8080 prior to starting Anki,
-  then surfing to localhost:8080 in Chrome. If you run into issues, try
-  connecting with Chrome 49.
+- Various operations that were supported by WebKit like setScrollPosition() now
+need to be implemented in javascript.
+- Page actions like mw.web.triggerPageAction(QWebEnginePage.Copy) are also
+asynchronous, and need to be rewritten to use javascript or a delay.
+- WebEngine doesn't provide a keyPressEvent() like WebKit did, so the code
+that catches shortcuts not attached to a menu or button has had to be changed.
+See the way reviewer.py calls setStateShortcuts() for an example.
 
 Add-ons without a top level file
 ---------------------------------
@@ -66,11 +89,10 @@ Sharing updated add-ons
 ------------------------
 
 If you've succeeded in making an add-on that supports both 2.0.x and 2.1.x at
-the same time, please feel free to upload it to the shared add-ons area. If
-you've decided to make a separate 2.1.x version, it's probably best to just
+the same time, please feel free to upload it to the shared add-ons area, and
+mention in the description that it works with both versions.
+
+If you've decided to make a separate 2.1.x version, it's probably best to just
 post a link to it in your current add-on description or upload it separately.
 When we get closer to a release I'll look into adding separate uploads for the
 two versions.
-
-
-
